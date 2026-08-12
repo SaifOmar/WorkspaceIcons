@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "id": "saif.workspaces",
+  "name": "My Workspaces",
+  "version": "1.0.0",
+  "author": "Saif Omar",
+  "description": "Workspace indicators with per-app icons for open windows",
+  "license": "MIT",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "Workspaces.qml"
+  },
+  "barWidget": {
+    "displayName": "My Workspaces",
+    "description": "Workspace indicators with per-app icons for open windows",
+    "category": "Compositor",
+    "allowMultiple": false
+  }
+}
