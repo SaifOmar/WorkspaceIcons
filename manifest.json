@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "saif.workspaces",
   "name": "My Workspaces",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "author": "Saif Omar",
   "description": "Workspace indicators with per-app icons for open windows",
   "license": "MIT",

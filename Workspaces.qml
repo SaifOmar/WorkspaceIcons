@@ -37,7 +37,7 @@ BarWidget {
             },
             {
                 pattern: "chrome-claude.ai__-default|claude",
-                icon: "󰭹"
+                icon: ""
             },
             {
                 pattern: '.*amazon.*',
@@ -71,11 +71,15 @@ BarWidget {
             // the generic firefox pattern above already matches any class containing "firefox".
             {
                 pattern: 'brave-x.com.*',
-                icon: "󰕄"
+                icon: ""
             },
             {
                 pattern: 'twitter-x',
-                icon: "󰕄"
+                icon: ""
+            },
+            {
+                pattern: 'x.com|twitter',
+                icon: ""
             },
             {
                 pattern: 'signal',
@@ -179,7 +183,7 @@ BarWidget {
             },
             {
                 pattern: '.*ChatGPT.*',
-                icon: "󰭹"
+                icon: ""
             },
             {
                 pattern: '.*deepseek.*',
@@ -461,12 +465,19 @@ BarWidget {
         return ids;
     }
 
+    function focusWorkspce(id) {
+        if (!root.bar)
+            return;
+        Hyprland.dispatch(`hl.dsp.focus({ workspace = ${id} })`);
+    }
+
     function switchWorkspace(delta) {
         if (!root.bar)
             return;
         var target = delta > 0 ? "e+" + delta : "e" + delta;
 
-        root.bar.run("hyprctl dispatch " + Util.shellQuote('hl.dsp.focus({ workspace = "' + target + '" })'));
+        Hyprland.dispatch('hl.dsp.focus({ workspace = "' + target + '" })');
+        // root.bar.run("hyprctl dispatch " + Util.shellQuote('hl.dsp.focus({ workspace = "' + target + '" })'));
     }
 
     function windowClass(toplevel) {
@@ -632,9 +643,8 @@ BarWidget {
                         cursorShape: Qt.PointingHandCursor
                         onEntered: btn.hovered = true
                         onExited: btn.hovered = false
-                        onClicked: if (btn.workspace) {
-                            btn.workspace.activate();
-                        }
+
+                        onClicked: root.focusWorkspce(btn.modelData)
                     }
                 }
             }
