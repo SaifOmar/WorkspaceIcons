@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "saif.workspaces",
   "name": "My Workspaces",
-  "version": "1.1.0",
+  "version": "1.2.4",
   "author": "Saif Omar",
   "description": "Workspace indicators with per-app icons for open windows",
   "license": "MIT",
@@ -16,6 +16,30 @@
     "displayName": "My Workspaces",
     "description": "Workspace indicators with per-app icons for open windows",
     "category": "Compositor",
-    "allowMultiple": false
+    "allowMultiple": false,
+    "defaults": {
+      "baseWorkspaceCount": 5,
+      "maxWorkspaceId": 10
+    },
+    "schema": [
+      {
+        "key": "baseWorkspaceCount",
+        "type": "integer",
+        "label": "Base workspace count",
+        "min": 1,
+        "max": 20,
+        "step": 1,
+        "defaultValue": 5
+      },
+      {
+        "key": "maxWorkspaceId",
+        "type": "integer",
+        "label": "Highest workspace id to show",
+        "min": 1,
+        "max": 20,
+        "step": 1,
+        "defaultValue": 10
+      }
+    ]
   }
 }
