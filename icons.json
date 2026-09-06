@@ -1,5 +1,37 @@
 [
   {
+    "pattern": "chrome-mail\\.google\\.com",
+    "icon": "\udb80\udeab"
+  },
+  {
+    "pattern": "chrome-calendar\\.google\\.com",
+    "icon": "\udb80\udced"
+  },
+  {
+    "pattern": "chrome-tasks\\.google\\.com",
+    "icon": "\udb80\ude79"
+  },
+  {
+    "pattern": "chrome-launchpad\\.37signals\\.com",
+    "icon": "\udb80\udcc7"
+  },
+  {
+    "pattern": "chrome-contacts\\.google\\.com",
+    "icon": "\udb80\udc09"
+  },
+  {
+    "pattern": "chrome-maps\\.google\\.com",
+    "icon": "\udb82\udd82"
+  },
+  {
+    "pattern": "chrome-messages\\.google\\.com",
+    "icon": "\udb80\udf61"
+  },
+  {
+    "pattern": "chrome-photos\\.google\\.com",
+    "icon": "\udb80\udee9"
+  },
+  {
     "pattern": "windows",
     "icon": "\ue8e5"
   },
