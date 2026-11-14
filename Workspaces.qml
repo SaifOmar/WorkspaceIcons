@@ -51,8 +51,17 @@ BarWidget {
     Connections {
         target: Hyprland
         function onRawEvent(event) {
-            if (event.name === "openwindow" || event.name === "windowtitlev2" || event.name === "activewindow" || event.name === "closewindow" || event.name === "movewindow" || event.name === "moveworkspacev2")
+            if (event.name === "openwindow" || event.name === "windowtitlev2" || event.name === "activewindow" || event.name === "closewindow" || event.name === "movewindow" || event.name === "moveworkspacev2" || event.name === "changeworkspaceid")
                 clientRefreshTimer.restart();
+
+            // Per-monitor highlight: Quickshell credits every workspace switch
+            // to the focused monitor and misses workspaces Omarchy renumbers,
+            // so ask Hyprland for the truth (as the built-in widget does).
+            var switched = event.name === "workspacev2" && root.monitor !== null && root.monitor.focused;
+            if (switched || event.name === "moveworkspacev2" || event.name === "changeworkspaceid") {
+                Hyprland.refreshMonitors();
+                Hyprland.refreshWorkspaces();
+            }
         }
     }
 
@@ -179,8 +188,79 @@ BarWidget {
     readonly property color urgentColor: Color.urgent
     readonly property color bgColor: root.bar ? root.bar.background : Color.background
 
-    readonly property int focusedId: Hyprland.focusedWorkspace ? Hyprland.focusedWorkspace.id : -1
     readonly property real trailingGap: root.vertical ? 0 : Style.spaceReal(15)
+
+    // ---- Per-monitor workspaces (Omarchy 4.5+) -----------------------------
+    // Omarchy 4.5 gives every monitor its own workspaces 1-10, which Hyprland
+    // numbers in a block of ten per monitor: 1-10, 11-20, and so on (see
+    // $OMARCHY_PATH/default/hypr/monitor-workspaces.lua). Each bar shows its
+    // own monitor's block, labelled 1-10, and highlights the workspace that
+    // monitor is showing, whichever monitor has focus.
+    //
+    // Older Omarchy has no such blocks and no state file naming them, so
+    // without one the widget keeps its original global behaviour.
+    readonly property int slots: 10
+
+    readonly property var monitor: {
+        var window = root.QsWindow.window;
+        var screen = window ? window.screen : null;
+        return screen ? Hyprland.monitorFor(screen) : Hyprland.focusedMonitor;
+    }
+    readonly property string monitorName: root.monitor ? root.monitor.name : ""
+
+    // Connector -> block, from the state file Omarchy's Hyprland config keeps.
+    property var blocks: ({})
+
+    function readBlocks(text) {
+        var next = {};
+        var lines = String(text || "").split("\n");
+        for (var i = 0; i < lines.length; i++) {
+            var fields = lines[i].split("\t");
+            if (fields.length >= 3 && fields[1] !== "")
+                next[fields[1]] = parseInt(fields[0], 10);
+        }
+        root.blocks = next;
+    }
+
+    FileView {
+        path: (Quickshell.env("XDG_STATE_HOME") || Quickshell.env("HOME") + "/.local/state") + "/omarchy/monitor-workspaces"
+        watchChanges: true
+        printErrors: false
+        onFileChanged: reload()
+        onLoaded: root.readBlocks(text())
+        onLoadFailed: root.readBlocks("")
+    }
+
+    function blockOf(id) {
+        return Math.floor((id - 1) / root.slots);
+    }
+
+    function slotOf(id) {
+        return (id - 1) % root.slots + 1;
+    }
+
+    // True once Omarchy's state file names this bar's monitor.
+    readonly property bool perMonitor: {
+        var b = root.blocks[root.monitorName];
+        return b !== undefined && isFinite(b);
+    }
+
+    readonly property int block: root.perMonitor ? root.blocks[root.monitorName] : 0
+
+    // The highlighted workspace: the one this bar's monitor shows, focused or
+    // not, or the globally focused one without per-monitor workspaces.
+    readonly property int activeId: {
+        if (!root.perMonitor)
+            return Hyprland.focusedWorkspace ? Hyprland.focusedWorkspace.id : -1;
+        return root.monitor && root.monitor.activeWorkspace ? root.monitor.activeWorkspace.id : -1;
+    }
+
+    // Per-monitor workspaces are labelled 1-10 within their monitor; global
+    // ones by their id. Workspace 10 keeps the original blank label.
+    function labelOf(id) {
+        var n = root.perMonitor ? root.slotOf(id) : id;
+        return n === 10 ? "" : String(n);
+    }
 
     function workspaceById(id) {
         var values = Hyprland.workspaces.values;
@@ -193,18 +273,46 @@ BarWidget {
 
     // Computed once per workspaces change instead of twice per layout pass
     // (it used to be called separately for grid columns AND Repeater model).
+    // Per monitor: the monitor's first baseWorkspaceCount slots, any of its
+    // other slots up to maxWorkspaceId that exist, then workspaces only
+    // visiting this monitor (an unplugged monitor's that had no room to join
+    // this block). Otherwise the original global list.
     readonly property var workspaceIdList: {
-        var ids = [];
-        for (var n = 1; n <= root.baseWorkspaceCount; n++)
-            ids.push(n);
         var values = Hyprland.workspaces.values;
-        for (var i = 0; i < values.length; i++) {
-            var id = values[i].id;
-            if (id > 0 && id <= root.maxWorkspaceId && ids.indexOf(id) === -1)
-                ids.push(id);
+        var ids = [];
+        var n, i, id;
+
+        if (!root.perMonitor) {
+            for (n = 1; n <= root.baseWorkspaceCount; n++)
+                ids.push(n);
+            for (i = 0; i < values.length; i++) {
+                id = values[i].id;
+                if (id > 0 && id <= root.maxWorkspaceId && ids.indexOf(id) === -1)
+                    ids.push(id);
+            }
+            ids.sort(function (left, right) { return left - right; });
+            return ids;
+        }
+
+        var base = root.block * root.slots;
+        var maxSlot = Math.min(root.slots, root.maxWorkspaceId);
+        for (n = 1; n <= Math.min(root.baseWorkspaceCount, maxSlot); n++)
+            ids.push(base + n);
+        var guests = [];
+        for (i = 0; i < values.length; i++) {
+            id = values[i].id;
+            if (!(id > 0))
+                continue;
+            if (root.blockOf(id) === root.block) {
+                if (root.slotOf(id) <= maxSlot && ids.indexOf(id) === -1)
+                    ids.push(id);
+            } else if (values[i].monitor && values[i].monitor.name === root.monitorName) {
+                guests.push(id);
+            }
         }
         ids.sort(function (left, right) { return left - right; });
-        return ids;
+        guests.sort(function (left, right) { return left - right; });
+        return ids.concat(guests);
     }
 
     function focusWorkspace(id) {
@@ -213,20 +321,36 @@ BarWidget {
         id = Math.floor(Number(id));
         if (!isFinite(id) || id < 1)
             return;
-        // The id must be a quoted string: this Hyprland ignores
-        // hl.dsp.focus({ workspace = <number> }) silently.
-        Hyprland.dispatch(`hl.dsp.focus({ workspace = "${id}" })`);
+        // Own workspaces go through Omarchy's per-monitor helper, which also
+        // focuses this bar's monitor first. The id must be a quoted string:
+        // this Hyprland ignores hl.dsp.focus({ workspace = <number> }) silently.
+        if (root.perMonitor && root.blockOf(id) === root.block && /^[A-Za-z0-9._-]+$/.test(root.monitorName))
+            Hyprland.dispatch(`o.workspaces.focus(${root.slotOf(id)}, "${root.monitorName}")`);
+        else
+            Hyprland.dispatch(`hl.dsp.focus({ workspace = "${id}" })`);
     }
 
+    // Per monitor, a wheel notch moves one entry along this monitor's row,
+    // holding at either end rather than wrapping or jumping to another
+    // monitor. Otherwise it steps through open workspaces as before.
     function switchWorkspace(delta) {
         if (!root.bar)
             return;
         delta = Math.floor(Number(delta));
         if (!isFinite(delta) || delta === 0)
             return;
-        var target = delta > 0 ? "e+" + delta : "e" + delta;
-
-        Hyprland.dispatch('hl.dsp.focus({ workspace = "' + target + '" })');
+        if (!root.perMonitor) {
+            var relative = delta > 0 ? "e+" + delta : "e" + delta;
+            Hyprland.dispatch('hl.dsp.focus({ workspace = "' + relative + '" })');
+            return;
+        }
+        var ids = root.workspaceIdList;
+        var index = ids.indexOf(root.activeId);
+        if (index === -1)
+            return;
+        var target = ids[Math.max(0, Math.min(ids.length - 1, index + delta))];
+        if (target !== ids[index])
+            root.focusWorkspace(target);
     }
 
     // Order matters and is preserved exactly as loaded (e.g. the amazon title
@@ -388,7 +512,10 @@ BarWidget {
 
                     readonly property var workspace: root.workspaceById(modelData)
                     readonly property bool occupied: root.isWorkspaceOccupied(btn.modelData)
-                    readonly property bool focused: root.focusedId === modelData
+                    // Per monitor, every bar highlights the workspace its
+                    // monitor shows, not only the focused one (see activeId).
+                    readonly property bool focused: root.activeId === modelData
+                    readonly property string label: root.labelOf(modelData)
                     readonly property bool urgent: btn.workspace !== null && btn.workspace.urgent === true
                     // Reactive icon list — refires on client/rule changes.
                     readonly property var iconList: root.workspaceIconList(btn.modelData)
@@ -444,9 +571,9 @@ BarWidget {
                             // ones are icons-only.
                             text: {
                                 if (!root.vertical)
-                                    return btn.focused ? "\uDB85\uDCFB" : (btn.modelData === 10 ? "" : String(btn.modelData));
+                                    return btn.focused ? "\uDB85\uDCFB" : btn.label;
                                 if (!btn.occupied)
-                                    return btn.modelData === 10 ? "" : String(btn.modelData);
+                                    return btn.label;
                                 return "";
                             }
                             color: (btn.urgent) ? root.bgColor : root.fgColor
