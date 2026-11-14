@@ -49,6 +49,16 @@ Set `baseWorkspaceCount` (always-shown workspaces) and `maxWorkspaceId` (highest
 { "id": "saif.workspaces", "baseWorkspaceCount": 7, "maxWorkspaceId": 12 }
 ```
 
+With per-monitor workspaces, described in the next section, both settings count within each monitor, up to 10.
+
+### Multiple monitors
+
+Omarchy 4.5 gives every monitor its own workspaces 1-10. Hyprland numbers them in blocks of ten, so the first monitor has 1-10, the next 11-20, and so on.
+
+Each monitor's bar shows that monitor's workspaces, labelled 1-10, and highlights the one the monitor shows, whether or not it has focus. Clicking a workspace opens it on that monitor. Scrolling over the widget steps through that monitor's workspaces.
+
+On Omarchy before 4.5, every bar shows the same list of workspace ids, as in earlier versions of this widget.
+
 ## Removal
 
 ```sh
