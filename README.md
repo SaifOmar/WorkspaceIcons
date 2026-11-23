@@ -2,6 +2,8 @@
 
 Hyprland workspace indicators with per-app icons for open windows. A `bar-widget` plugin for the Omarchy shell, based on the built-in `omarchy.workspaces` widget with an expanded app-icon rule set.
 
+Tracks upstream `omarchy.workspaces` behavior: **per-monitor workspace blocks** (each bar shows its own monitor's 1–10, kept by `monitor-workspaces.lua`), guest workspaces from unplugged monitors shown after the monitor's own with a gap, clamped mouse-wheel scroll, and the **layout-mode glyph** — the focused slot shows whether it tiles (square), scrolls (circle), or floats (triangle), and clicking the focused slot cycles the layout just like Super + L.
+
 ![preview](preview.png)
 
 ## Requirements
@@ -43,11 +45,13 @@ Its rules are matched before the plugin's built-in ones.
 
 ### Workspace counts
 
-Set `baseWorkspaceCount` (always-shown workspaces) and `maxWorkspaceId` (highest id picked up from Hyprland) in your shell config's bar layout entry:
+Set `baseWorkspaceCount` (always-shown slots of this monitor's block) and `maxWorkspaceId` (highest slot picked up from Hyprland) in your shell config's bar layout entry:
 
 ```json
 { "id": "saif.workspaces", "baseWorkspaceCount": 7, "maxWorkspaceId": 12 }
 ```
+
+Counts are of slots within each monitor's block of ten, not global workspace ids.
 
 ## Removal
 

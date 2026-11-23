@@ -10,6 +10,82 @@ BarWidget {
     id: root
     moduleName: "saif.workspaces"
 
+    // -----------------------------------------------------------------------
+    // Per-monitor workspace blocks (ported from omarchy.workspaces)
+    //
+    // Every monitor has workspaces 1-10 of its own, which Hyprland numbers in a
+    // block of ten per monitor: 1-10, 11-20, and so on (see
+    // default/hypr/monitor-workspaces.lua). Each bar shows its own monitor's
+    // block, numbered 1-10, whatever monitor shows it.
+    readonly property int slots: 10
+
+    readonly property var monitor: {
+        var window = root.QsWindow.window;
+        var screen = window ? window.screen : null;
+        return screen ? Hyprland.monitorFor(screen) : Hyprland.focusedMonitor;
+    }
+    readonly property string monitorName: root.monitor ? root.monitor.name : ""
+
+    // Connector -> block, from the file Hyprland keeps them in.
+    property var blocks: ({})
+
+    function readBlocks(text) {
+        var next = {};
+        var lines = String(text || "").split("\n");
+        for (var i = 0; i < lines.length; i++) {
+            var fields = lines[i].split("\t");
+            if (fields.length >= 2 && fields[1] !== "")
+                next[fields[1]] = parseInt(fields[0], 10);
+        }
+        root.blocks = next;
+    }
+
+    FileView {
+        id: blocksFile
+        path: (Quickshell.env("XDG_STATE_HOME") || Quickshell.env("HOME") + "/.local/state") + "/omarchy/monitor-workspaces"
+        watchChanges: true
+        printErrors: false
+        onFileChanged: reload()
+        onLoaded: root.readBlocks(blocksFile.text())
+        onLoadFailed: root.readBlocks("")
+    }
+
+    function blockOf(id) {
+        return Math.floor((id - 1) / root.slots);
+    }
+
+    function slotOf(id) {
+        return (id - 1) % root.slots + 1;
+    }
+
+    // The connector that owns a block, from the same file: guest workspaces
+    // are sent home through it. Empty when the file names no monitor for that
+    // block — a block whose monitor is unplugged, for one.
+    function monitorOfBlock(block) {
+        for (var connector in root.blocks) {
+            if (root.blocks[connector] === block)
+                return connector;
+        }
+        return "";
+    }
+
+    // Per-bar focus, not the globally focused workspace: on this system each
+    // monitor lives in its own block, so a bar lights its own monitor's slot.
+    function activeWorkspaceId() {
+        return root.monitor && root.monitor.activeWorkspace ? root.monitor.activeWorkspace.id : -1;
+    }
+
+    // Until Hyprland has written the file, the workspace a monitor shows is in
+    // its own block.
+    readonly property int block: {
+        var block = root.blocks[root.monitorName];
+        if (block !== undefined)
+            return block;
+        var active = root.activeWorkspaceId();
+        return active > 0 ? root.blockOf(active) : 0;
+    }
+
+    // -----------------------------------------------------------------------
     // NOTE: this is what keeps the widget in sync with Hyprland windows.
     // Window lists are read straight from `hyprctl clients` (the same data
     // hyprctl itself reports) instead of Quickshell's tracked toplevels,
@@ -24,7 +100,7 @@ BarWidget {
         try {
             arr = JSON.parse(String(jsonText || "[]"));
         } catch (e) {
-            return;   // keep last good snapshot rather than blanking the bar
+            return; // keep last good snapshot rather than blanking the bar
         }
         if (!(arr instanceof Array))
             return;
@@ -36,7 +112,10 @@ BarWidget {
             var id = c.workspace.id;
             if (!(id in map))
                 map[id] = [];
-            map[id].push({ cls: String(c.class || ""), title: String(c.title || "") });
+            map[id].push({
+                cls: String(c.class || ""),
+                title: String(c.title || "")
+            });
         }
         root.wsWindows = map;
     }
@@ -48,14 +127,6 @@ BarWidget {
         onTriggered: clientsProc.running = true
     }
 
-    Connections {
-        target: Hyprland
-        function onRawEvent(event) {
-            if (event.name === "openwindow" || event.name === "windowtitlev2" || event.name === "activewindow" || event.name === "closewindow" || event.name === "movewindow" || event.name === "moveworkspacev2")
-                clientRefreshTimer.restart();
-        }
-    }
-
     Process {
         id: clientsProc
         command: ["hyprctl", "-j", "clients"]
@@ -64,8 +135,6 @@ BarWidget {
             onStreamFinished: root.applyClients(text)
         }
     }
-
-    Component.onCompleted: clientsProc.running = true
 
     readonly property string defaultIcon: "󰘔"
 
@@ -81,6 +150,10 @@ BarWidget {
 
     // User-configurable via this widget's inline shell.json entry, e.g.
     //   { "id": "saif.workspaces", "baseWorkspaceCount": 7, "maxWorkspaceId": 12 }
+    // Counts are of slots inside this monitor's block now, not global ids:
+    // the bar always shows the first baseWorkspaceCount slots of its own
+    // block, plus any others of the block that already exist up to
+    // maxWorkspaceId. A count above ten simply reaches the block's end.
     readonly property int baseWorkspaceCount: intSetting("baseWorkspaceCount", 5)
     readonly property int maxWorkspaceId: intSetting("maxWorkspaceId", 10)
 
@@ -94,16 +167,27 @@ BarWidget {
         if (url.indexOf("file://") !== 0)
             return url;
         var p = url.substring(7);
-        try { p = decodeURIComponent(p); } catch (e) {}
+        try {
+            p = decodeURIComponent(p);
+        } catch (e) {}
         return p;
     }
     readonly property string overrideRulesPath: Quickshell.env("HOME") + "/.config/omarchy/workspaces-icons.json"
 
     // Minimal fallback so the widget still works if neither file parses.
     readonly property var fallbackRules: [
-        { pattern: "firefox|zen|chrom|brave|chrome", icon: "󰈹" },
-        { pattern: "kitty|foot|alacritty|ghostty|wezterm|konsole", icon: "󰆍" },
-        { pattern: "code|codium|zed", icon: "󰨞" }
+        {
+            pattern: "firefox|zen|chrom|brave|chrome",
+            icon: "󰈹"
+        },
+        {
+            pattern: "kitty|foot|alacritty|ghostty|wezterm|konsole",
+            icon: "󰆍"
+        },
+        {
+            pattern: "code|codium|zed",
+            icon: "󰨞"
+        }
     ]
 
     property var baseRules: []
@@ -143,13 +227,7 @@ BarWidget {
             var parsed = JSON.parse(String(text || "[]"));
             if (parsed instanceof Array)
                 arr = parsed.filter(function (r) {
-                    return r
-                        && typeof r.pattern === "string"
-                        && r.pattern.length > 0
-                        && r.pattern.length <= root.maxRulePatternLength
-                        && typeof r.icon === "string"
-                        && r.icon.length > 0
-                        && r.icon.length <= root.maxIconLength;
+                    return r && typeof r.pattern === "string" && r.pattern.length > 0 && r.pattern.length <= root.maxRulePatternLength && typeof r.icon === "string" && r.icon.length > 0 && r.icon.length <= root.maxIconLength;
                 });
         } catch (e) {}
         if (isOverride)
@@ -167,7 +245,10 @@ BarWidget {
         var out = [];
         for (var i = 0; i < list.length; i++) {
             try {
-                out.push({ re: new RegExp(list[i].pattern, "i"), icon: list[i].icon });
+                out.push({
+                    re: new RegExp(list[i].pattern, "i"),
+                    icon: list[i].icon
+                });
             } catch (e) {} // skip invalid regexes rather than breaking the bar
         }
         root.compiledRules = out;
@@ -179,7 +260,6 @@ BarWidget {
     readonly property color urgentColor: Color.urgent
     readonly property color bgColor: root.bar ? root.bar.background : Color.background
 
-    readonly property int focusedId: Hyprland.focusedWorkspace ? Hyprland.focusedWorkspace.id : -1
     readonly property real trailingGap: root.vertical ? 0 : Style.spaceReal(15)
 
     function workspaceById(id) {
@@ -191,20 +271,47 @@ BarWidget {
         return null;
     }
 
-    // Computed once per workspaces change instead of twice per layout pass
-    // (it used to be called separately for grid columns AND Repeater model).
+    // This monitor's block, shown as slots: the first baseWorkspaceCount slots,
+    // then any others of the block that already exist within maxWorkspaceId.
+    // After them come guest workspaces — ones of a monitor that is unplugged,
+    // which had no room to join their own block again, that are being shown
+    // here. Empty ones are left out: Hyprland is loose with the monitor field
+    // of an empty, parked workspace (it reports whichever monitor last touched
+    // it), and a phantom entry with no windows on it would otherwise paint a
+    // second number on the bar for a workspace that isn't really visiting.
+    // Computed once per workspaces change instead of twice per layout
+    // pass (it used to be called separately for grid columns AND Repeater
+    // model).
     readonly property var workspaceIdList: {
         var ids = [];
-        for (var n = 1; n <= root.baseWorkspaceCount; n++)
-            ids.push(n);
+        var base = root.block * root.slots;
+        for (var n = 1; n <= Math.min(root.baseWorkspaceCount, root.slots); n++)
+            ids.push(base + n);
         var values = Hyprland.workspaces.values;
+        var guests = [];
         for (var i = 0; i < values.length; i++) {
             var id = values[i].id;
-            if (id > 0 && id <= root.maxWorkspaceId && ids.indexOf(id) === -1)
-                ids.push(id);
+            if (id <= 0)
+                continue;
+            if (root.blockOf(id) === root.block) {
+                if (root.slotOf(id) <= root.maxWorkspaceId && ids.indexOf(id) === -1)
+                    ids.push(id);
+            } else if (values[i].monitor && values[i].monitor.name === root.monitorName && root.isWorkspaceOccupied(id)) {
+                guests.push(id);
+            }
         }
-        ids.sort(function (left, right) { return left - right; });
-        return ids;
+        ids.sort(function (left, right) {
+            return left - right;
+        });
+        guests.sort(function (left, right) {
+            return left - right;
+        });
+        return ids.concat(guests);
+    }
+
+    function dispatch(expression) {
+        if (root.bar)
+            root.bar.run("hyprctl dispatch " + Util.shellQuote(expression));
     }
 
     function focusWorkspace(id) {
@@ -213,22 +320,118 @@ BarWidget {
         id = Math.floor(Number(id));
         if (!isFinite(id) || id < 1)
             return;
-        // The id must be a quoted string: this Hyprland ignores
-        // hl.dsp.focus({ workspace = <number> }) silently.
-        Hyprland.dispatch(`hl.dsp.focus({ workspace = "${id}" })`);
+        // Everything goes through the omarchy action, which focuses the
+        // monitor it names, pulls the workspace home if a move or an unplug
+        // left it elsewhere, and then focuses it. That must run through
+        // hyprctl — the o.workspaces expressions are omarchy bind actions,
+        // and Hyprland.dispatch cannot run them.
+        // Sending guests to their own monitor matters: a plain
+        // hl.dsp.focus({ workspace = id }) is resolved against whatever
+        // monitor is focused, and Hyprland then swaps the view over — stealing
+        // a workspace onto the wrong screen, which is how empty slot-five
+        // workspaces ended up visiting. THE ID MUST BE A QUOTED STRING in the
+        // plain fallback, as this Hyprland silently ignores
+        // hl.dsp.focus({ workspace = <number> }).
+        if (root.blockOf(id) === root.block)
+            root.dispatch("o.workspaces.focus(" + root.slotOf(id) + ", \"" + root.monitorName + "\")");
+        else {
+            var home = root.monitorOfBlock(root.blockOf(id));
+            if (home)
+                root.dispatch("o.workspaces.focus(" + root.slotOf(id) + ", \"" + home + "\")");
+            else
+                root.dispatch("hl.dsp.focus({ workspace = \"" + id + "\" })");
+        }
     }
 
-    function switchWorkspace(delta) {
+    // A wheel notch moves one entry along the row, and a touchpad adds up its
+    // smaller deltas until they make a notch's worth. Holds at either end
+    // rather than wrapping, so a touchpad swipe that runs long stops on the
+    // last workspace — and a relative e+/e- dispatch is no longer used at all,
+    // since it would hop across monitor blocks now that workspaces are per
+    // monitor.
+    property real scrollAccumulator: 0
+
+    function scrollWorkspaces(delta) {
         if (!root.bar)
             return;
-        delta = Math.floor(Number(delta));
-        if (!isFinite(delta) || delta === 0)
+        var wheel = Util.wheelSteps(root.scrollAccumulator, delta);
+        root.scrollAccumulator = wheel.remainder;
+        if (wheel.steps === 0)
             return;
-        var target = delta > 0 ? "e+" + delta : "e" + delta;
-
-        Hyprland.dispatch('hl.dsp.focus({ workspace = "' + target + '" })');
+        var ids = root.workspaceIdList;
+        var index = ids.indexOf(root.activeWorkspaceId());
+        if (index === -1)
+            return;
+        var target = ids[Util.clamp(index - wheel.steps, 0, ids.length - 1)];
+        if (target !== ids[index])
+            root.focusWorkspace(target);
     }
 
+    // ---- Layout mode (ported from omarchy.workspaces) ----------------------
+    // The workspace each monitor shows carries its layout: a square tiles, a
+    // circle scrolls, and a triangle floats. Clicking the focused one cycles to
+    // the next, as Super + L does.
+
+    property string activeMode: "dwindle"
+    property bool modeStale: false
+
+    function modeGlyph(mode) {
+        if (mode === "scrolling")
+            return "󰝥";
+        if (mode === "floating")
+            return "󰔶";
+        return "󱓻";
+    }
+
+    // A layout only changes through the layout commands, which ask for a
+    // refresh, or a config reload, so each workspace's mode is read once and
+    // cached rather than running the script on every workspace switch.
+    property var modeCache: ({})
+    property int modeGeneration: 0
+    property int modeProcWorkspace: -1
+    property int modeProcGeneration: 0
+
+    function showActiveMode() {
+        var mode = root.modeCache[root.activeWorkspaceId()];
+        if (mode !== undefined)
+            root.activeMode = mode;
+        else
+            root.readMode();
+    }
+
+    function readMode() {
+        if (modeProc.running) {
+            root.modeStale = true;
+            return;
+        }
+        var id = root.activeWorkspaceId();
+        if (id === -1)
+            return;
+        root.modeProcWorkspace = id;
+        root.modeProcGeneration = root.modeGeneration;
+        modeProc.command = ["omarchy-hyprland-workspace-layout-current", String(id)];
+        modeProc.running = true;
+    }
+
+    function refresh() {
+        root.modeCache = ({});
+        root.modeGeneration++;
+        root.readMode();
+    }
+
+    // The layout commands act on the focused workspace, so a click on another
+    // monitor's bar focuses that monitor first.
+    function cycleLayout() {
+        if (!root.bar)
+            return;
+        var command = "omarchy-hyprland-workspace-layout-toggle";
+        if (root.monitor && !root.monitor.focused) {
+            command = "hyprctl dispatch " + Util.shellQuote("hl.dsp.focus({ monitor = \"" + root.monitorName + "\" })") + " >/dev/null && " + command;
+        }
+        root.bar.run(command);
+    }
+
+    // -----------------------------------------------------------------------
     // Order matters and is preserved exactly as loaded (e.g. the amazon title
     // rule has to stay ahead of the browser class rules, or every Amazon tab
     // in Firefox would show the Firefox icon instead).
@@ -333,11 +536,88 @@ BarWidget {
             var step = iconMetrics.advanceWidth + gap;
             var reserve = (i < icons.length - 1) ? ellReserve : 0;
             if (acc + step + reserve > avail && i > 0)
-                break;   // always show ≥1
+                break; // always show ≥1
             acc += step;
             count++;
         }
-        return Math.max(count, 1);   // never a bare "…"
+        return Math.max(count, 1); // never a bare "…"
+    }
+
+    Component.onCompleted: {
+        clientsProc.running = true;
+        root.refresh();
+    }
+
+    onMonitorChanged: root.showActiveMode()
+
+    Connections {
+        target: root.monitor
+        function onActiveWorkspaceChanged() {
+            root.showActiveMode();
+        }
+    }
+
+    Connections {
+        target: Hyprland
+        function onRawEvent(event) {
+            var name = event ? String(event.name) : "";
+
+            // Window-list refresh, debounced so title churn doesn't spawn a
+            // hyprctl process per keystroke.
+            if (name === "openwindow" || name === "windowtitlev2" || name === "activewindow" || name === "closewindow" || name === "movewindow" || name === "moveworkspacev2")
+                clientRefreshTimer.restart();
+
+            // Quickshell credits every workspace switch to the focused
+            // monitor, as the event doesn't say which one switched, and misses
+            // the workspace a monitor falls back to when its own is moved
+            // away. Moving workspaces between monitors switches the others, so
+            // ask Hyprland for the truth. A workspace that changes number is
+            // only learned by asking too. Every bar shares what Hyprland
+            // answers, so one asks after a plain switch.
+            var switched = name === "workspacev2" && root.monitor !== null && root.monitor.focused;
+            if (switched || name === "moveworkspacev2" || name === "changeworkspaceid") {
+                Hyprland.refreshMonitors();
+                Hyprland.refreshWorkspaces();
+            }
+
+            // A config reload can switch modes, blocks, or both.
+            if (name === "configreloaded")
+                root.refresh();
+        }
+    }
+
+    Process {
+        id: modeProc
+        stdout: StdioCollector {
+            onStreamFinished: {
+                var mode = text.trim();
+                // A read that started before a refresh may predate the change.
+                if (!mode || root.modeProcGeneration !== root.modeGeneration)
+                    return;
+                root.modeCache[root.modeProcWorkspace] = mode;
+                if (root.modeProcWorkspace === root.activeWorkspaceId())
+                    root.activeMode = mode;
+            }
+        }
+        onExited: {
+            if (!root.modeStale)
+                return;
+            root.modeStale = false;
+            // Deferred: the process still reports running while it signals exit.
+            Qt.callLater(root.showActiveMode);
+        }
+    }
+
+    // Super + L and the default layout change the mode without a focus change,
+    // so they ask every bar to read it again. The target is omarchy's, on
+    // purpose: the scripts announce `omarchy-shell -q omarchy.workspaces
+    // refresh`, and only one widget at a time is in the bar to answer it.
+    ShellIpc {
+        target: "omarchy.workspaces"
+
+        function refresh(): void {
+            root.broadcast("refresh");
+        }
     }
 
     // Size per orientation: the host slot forces width to barSize in vertical
@@ -358,10 +638,7 @@ BarWidget {
             anchors.fill: parent
             acceptedButtons: Qt.NoButton
             onWheel: function (wheel) {
-                if (wheel.angleDelta.y > 0)
-                    root.switchWorkspace(1);
-                else
-                    root.switchWorkspace(-1);
+                root.scrollWorkspaces(wheel.angleDelta.y);
             }
         }
 
@@ -385,18 +662,23 @@ BarWidget {
                 Rectangle {
                     id: btn
                     required property int modelData
+                    required property int index
 
-                    readonly property var workspace: root.workspaceById(modelData)
+                    readonly property var workspace: root.workspaceById(btn.modelData)
                     readonly property bool occupied: root.isWorkspaceOccupied(btn.modelData)
-                    readonly property bool focused: root.focusedId === modelData
+                    // This bar's monitor shows this workspace, not the globally
+                    // focused one: each monitor's bar lights its own slot.
+                    readonly property bool shown: root.monitor !== null && root.monitor.activeWorkspace !== null && root.monitor.activeWorkspace.id === btn.modelData
+                    readonly property int slot: root.slotOf(btn.modelData)
+                    // A guest joins after the monitor's own; a gap sets it apart.
+                    readonly property bool firstGuest: root.blockOf(btn.modelData) !== root.block && btn.index > 0 && root.blockOf(root.workspaceIdList[btn.index - 1]) === root.block
                     readonly property bool urgent: btn.workspace !== null && btn.workspace.urgent === true
                     // Reactive icon list — refires on client/rule changes.
                     readonly property var iconList: root.workspaceIconList(btn.modelData)
                     // Authoritative count (hyprctl clients) — drives sizing.
                     readonly property int windowCount: root.workspaceWindowCount(btn.modelData)
                     // Icons shrink as windows pile up — vertical bars only.
-                    // (The label no longer counts as an item: occupied pills
-                    // are icons-only on vertical bars.)
+                    // (Slots show icons; the mode glyph rides with the label.)
                     readonly property real iconScaleFactor: root.vertical ? root.iconScale(btn.windowCount) : 1.0
                     // Rendered icon size — single source of truth shared by
                     // measurement (fittedIconCount) and rendering so both
@@ -412,18 +694,20 @@ BarWidget {
                     readonly property int fittedCount: btn.fittedIcons.length
 
                     function refit() {
-                        btn.fittedIcons = btn.iconList.slice(
-                            0, root.fittedIconCount(btn.iconList, btn.contentAvail, Style.font.icon));
+                        btn.fittedIcons = btn.iconList.slice(0, root.fittedIconCount(btn.iconList, btn.contentAvail, Style.font.icon));
                     }
                     onIconListChanged: btn.refit()
                     onContentAvailChanged: btn.refit()
                     Component.onCompleted: btn.refit()
                     property bool hovered: false
 
+                    // A gap sets visiting workspaces apart from the monitor's own.
+                    Layout.leftMargin: btn.firstGuest && !root.vertical ? Style.space(6) : 0
+                    Layout.topMargin: btn.firstGuest && root.vertical ? Style.space(6) : 0
+
                     radius: Style.spaceReal(8)
-                    color: btn.urgent ? root.urgentColor : (btn.focused ? Util.alpha(root.fgColor, 0.2) :
-                        (btn.hovered ? Util.alpha(root.fgColor, 0.15) : "transparent"))
-                    opacity: (btn.occupied || btn.focused) ? 1 : 0.5
+                    color: btn.urgent ? root.urgentColor : (btn.shown ? Util.alpha(root.fgColor, 0.2) : (btn.hovered ? Util.alpha(root.fgColor, 0.15) : "transparent"))
+                    opacity: (btn.occupied || btn.shown) ? 1 : 0.5
                     Layout.alignment: Qt.AlignVCenter
                     Layout.fillHeight: true
                     Layout.fillWidth: root.vertical
@@ -437,16 +721,20 @@ BarWidget {
                         spacing: Style.spaceReal(3)
 
                         Text {
-                            // Horizontal: unchanged — focused glyph or the
-                            // plain number. Vertical: numbers only for empty
-                            // workspaces (including the focused one — a bare
-                            // highlight pill would be invisible); occupied
-                            // ones are icons-only.
+                            // The focused slot shows its layout: a square
+                            // tiles, a circle scrolls, a triangle floats;
+                            // clicking it cycles (as Super + L does). Others
+                            // keep the plain slot number — shown 1-10, with
+                            // slot ten blank except for its icons.
                             text: {
+                                if (btn.shown)
+                                    return root.modeGlyph(root.activeMode);
+                                if (btn.slot === root.slots)
+                                    return "";
                                 if (!root.vertical)
-                                    return btn.focused ? "\uDB85\uDCFB" : (btn.modelData === 10 ? "" : String(btn.modelData));
+                                    return String(btn.slot);
                                 if (!btn.occupied)
-                                    return btn.modelData === 10 ? "" : String(btn.modelData);
+                                    return String(btn.slot);
                                 return "";
                             }
                             color: (btn.urgent) ? root.bgColor : root.fgColor
@@ -503,7 +791,14 @@ BarWidget {
                         onEntered: btn.hovered = true
                         onExited: btn.hovered = false
 
-                        onClicked: root.focusWorkspace(btn.modelData)
+                        onClicked: function (mouse) {
+                            // Clicking the focused workspace cycles its
+                            // layout; clicking anything else focuses it.
+                            if (btn.shown)
+                                root.cycleLayout();
+                            else
+                                root.focusWorkspace(btn.modelData);
+                        }
                     }
                 }
             }
